@@ -6,7 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 class OverviewFeature(reducer: OverviewReducer) : Feature<OverviewState, OverviewCommand, OverviewEvent> by Feature(
-    initialState = OverviewState(),
+    initialState = OverviewState.Default(),
     scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
     reducer = reducer,
     OverviewCommand.Initialize

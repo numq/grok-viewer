@@ -1,8 +1,6 @@
 package io.github.numq.grokviewer.content
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 import org.apache.tika.Tika
 import java.io.File
 import java.util.zip.ZipInputStream
@@ -10,8 +8,6 @@ import kotlin.coroutines.coroutineContext
 
 interface ContentService {
     suspend fun parse(path: String): Result<List<Content>>
-
-    suspend fun save(content: Content, path: String, name: String): Result<Unit>
 
     class BinaryContentService(private val tika: Tika) : ContentService {
         private fun resolveContent(id: String, path: String, bytes: ByteArray): Content {
@@ -55,16 +51,6 @@ interface ContentService {
                         entry = zis.getNextEntry()
                     }
                 }
-            }
-        }
-
-        override suspend fun save(content: Content, path: String, name: String) = runCatching {
-            withContext(Dispatchers.IO) {
-                val destination = File(path, name)
-
-                destination.parentFile?.mkdirs()
-
-                destination.writeBytes(content.rawBytes)
             }
         }
     }

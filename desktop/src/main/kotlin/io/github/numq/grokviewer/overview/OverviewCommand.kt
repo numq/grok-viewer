@@ -5,7 +5,9 @@ import io.github.numq.grokviewer.content.Content
 import kotlinx.coroutines.flow.Flow
 
 sealed interface OverviewCommand {
-    enum class Key { INITIALIZE, INITIALIZE_SUCCESS, UPLOAD_FILES, REMOVE_ARCHIVE, CLEAR_ARCHIVES, SAVE_CONTENT_CONFIRMATION }
+    enum class Key {
+        INITIALIZE, INITIALIZE_SUCCESS, UPLOAD_FILES, REMOVE_ARCHIVE, CLEAR_ARCHIVES, SAVE_CONTENT_CONFIRMATION
+    }
 
     data class HandleFailure(val throwable: Throwable) : OverviewCommand
 
@@ -37,15 +39,25 @@ sealed interface OverviewCommand {
 
     data object ClearArchivesSuccess : OverviewCommand
 
+    data class AddToSelection(val contents: List<Content>) : OverviewCommand
+
+    data class RemoveFromSelection(val contents: List<Content>) : OverviewCommand
+
+    data object ClearSelection : OverviewCommand
+
+    data class SaveArchive(val archive: Archive.Processed) : OverviewCommand
+
     data class SaveContent(val content: Content) : OverviewCommand
 
-    data class SaveContentConfirmation(val path: String, val name: String) : OverviewCommand {
+    data class SaveContents(val contents: List<Content>) : OverviewCommand
+
+    data class SaveConfirmation(val path: String, val name: String) : OverviewCommand {
         val key = Key.SAVE_CONTENT_CONFIRMATION
     }
 
-    data object SaveContentCancellation : OverviewCommand
+    data object SaveCancellation : OverviewCommand
 
-    data object SaveContentSuccess : OverviewCommand
+    data object SaveSuccess : OverviewCommand
 
     data class UpdateHovering(val isHovered: Boolean) : OverviewCommand
 }

@@ -6,13 +6,14 @@ import io.github.numq.grokviewer.archive.archiveModule
 import io.github.numq.grokviewer.content.contentModule
 import io.github.numq.grokviewer.overview.OverviewView
 import io.github.numq.grokviewer.overview.overviewModule
+import io.github.numq.grokviewer.save.saveModule
 import io.github.numq.grokviewer.theme.Theme
 import org.koin.core.context.startKoin
 
 const val TITLE = "Grok Viewer"
 
 fun main() {
-    startKoin { modules(archiveModule, contentModule, overviewModule) }
+    startKoin { modules(archiveModule, contentModule, overviewModule, saveModule) }
 
     singleWindowApplication(title = TITLE) {
         Theme(darkTheme = isSystemInDarkTheme()) {

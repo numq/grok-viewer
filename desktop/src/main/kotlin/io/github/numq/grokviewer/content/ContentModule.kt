@@ -6,6 +6,4 @@ import org.koin.dsl.module
 
 val contentModule = module {
     single { ContentService.BinaryContentService(tika = Tika()) } bind ContentService::class
-
-    single { SaveContent(service = get()) } bind SaveContent::class
 }
