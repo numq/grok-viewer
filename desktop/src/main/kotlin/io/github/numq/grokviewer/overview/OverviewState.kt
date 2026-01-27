@@ -1,11 +1,13 @@
 package io.github.numq.grokviewer.overview
 
-import io.github.numq.grokviewer.archive.Archive
+import io.github.numq.grokviewer.archive.ArchiveContentFilter
 import io.github.numq.grokviewer.content.Content
 import io.github.numq.grokviewer.save.SaveCandidate
 
 sealed interface OverviewState {
-    val archives: List<Archive>
+    val contentFilters: Set<ArchiveContentFilter>
+
+    val overviewArchives: List<OverviewArchive>
 
     val lastDirectoryPath: String?
 
@@ -14,14 +16,16 @@ sealed interface OverviewState {
     val isHovered: Boolean
 
     data class Default(
-        override val archives: List<Archive> = emptyList(),
+        override val contentFilters: Set<ArchiveContentFilter> = emptySet(),
+        override val overviewArchives: List<OverviewArchive> = emptyList(),
         override val lastDirectoryPath: String? = null,
         override val saveCandidate: SaveCandidate? = null,
         override val isHovered: Boolean = false,
     ) : OverviewState
 
     data class Selection(
-        override val archives: List<Archive> = emptyList(),
+        override val contentFilters: Set<ArchiveContentFilter> = emptySet(),
+        override val overviewArchives: List<OverviewArchive> = emptyList(),
         override val lastDirectoryPath: String? = null,
         override val saveCandidate: SaveCandidate? = null,
         override val isHovered: Boolean = false,

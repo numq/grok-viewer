@@ -6,6 +6,9 @@ import org.koin.dsl.onClose
 val overviewModule = module {
     single {
         OverviewReducer(
+            getArchiveContentFilters = get(),
+            addArchiveContentFilter = get(),
+            removeArchiveContentFilter = get(),
             addArchives = get(),
             clearArchives = get(),
             getArchives = get(),

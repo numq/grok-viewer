@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlinx.atomicfu)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 dependencies {
@@ -14,6 +15,7 @@ dependencies {
     implementation(compose.materialIconsExtended)
     implementation(compose.ui)
     implementation(libs.koin.compose)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.tika)
 }
 

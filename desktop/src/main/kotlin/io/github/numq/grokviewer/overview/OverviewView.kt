@@ -1,22 +1,17 @@
 package io.github.numq.grokviewer.overview
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderZip
-import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,8 +21,14 @@ import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.unit.dp
 import io.github.numq.grokviewer.archive.Archive
+import io.github.numq.grokviewer.archive.ArchiveContentFilter
 import io.github.numq.grokviewer.content.ContentCard
 import io.github.numq.grokviewer.save.SaveCandidate
 import kotlinx.coroutines.Dispatchers
@@ -40,17 +41,29 @@ import java.io.File
 import java.net.URI
 import java.nio.file.Path
 
-@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+private const val HEADER_SIZE = 64f
+
+private const val CELL_SIZE = 128f
+
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun OverviewView(feature: OverviewFeature = koinInject()) {
     val scope = rememberCoroutineScope()
 
     val state by feature.state.collectAsState()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
     LaunchedEffect(Unit) {
         feature.events.collect { event ->
             when (event) {
-                is OverviewEvent.Error -> println(event.message)
+                is OverviewEvent.Error -> {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = event.message, withDismissAction = true, duration = SnackbarDuration.Short
+                        )
+                    }
+                }
             }
         }
     }
@@ -105,7 +118,7 @@ fun OverviewView(feature: OverviewFeature = koinInject()) {
                 is SaveCandidate.Contents -> "${System.currentTimeMillis()}.zip"
             }
 
-            val dialog = FileDialog(null as Frame?, "Save Content", FileDialog.SAVE).apply {
+            val dialog = FileDialog(null as Frame?, "Save as ZIP", FileDialog.SAVE).apply {
                 file = fileName
 
                 directory = state.lastDirectoryPath
@@ -123,8 +136,63 @@ fun OverviewView(feature: OverviewFeature = koinInject()) {
         }
     }
 
-    Scaffold(modifier = Modifier.fillMaxSize(), floatingActionButton = {
+    var isFloatingHovered by remember { mutableStateOf(false) }
+
+    Scaffold(modifier = Modifier.fillMaxSize(), topBar = {
+        AnimatedVisibility(visible = state.overviewArchives.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
+            TopAppBar(title = {
+                Text(text = "Files uploaded: ${state.overviewArchives.size}")
+            }, actions = {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ArchiveContentFilter.entries.forEach { contentFilter ->
+                        val isSelected = contentFilter in state.contentFilters
+
+                        ElevatedFilterChip(
+                            selected = isSelected, onClick = {
+                            scope.launch {
+                                val command = if (isSelected) {
+                                    OverviewCommand.RemoveContentFilter(contentFilter)
+                                } else {
+                                    OverviewCommand.AddContentFilter(contentFilter)
+                                }
+
+                                feature.execute(command)
+                            }
+                        }, label = { Text("Filter by ${contentFilter.displayName}") }, leadingIcon = when {
+                            isSelected -> {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Filled.Done,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(FilterChipDefaults.IconSize)
+                                    )
+                                }
+                            }
+
+                            else -> null
+                        })
+                    }
+                }
+            })
+        }
+    }, snackbarHost = {
+        SnackbarHost(hostState = snackbarHostState) { data ->
+            Snackbar(
+                snackbarData = data,
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                dismissActionContentColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }, floatingActionButton = {
         AnimatedVisibility(
+            modifier = Modifier.onPointerEvent(
+            eventType = PointerEventType.Enter, onEvent = { isFloatingHovered = true })
+            .onPointerEvent(eventType = PointerEventType.Exit, onEvent = { isFloatingHovered = false }),
             visible = (state as? OverviewState.Selection)?.contents?.isNotEmpty() == true,
             enter = fadeIn(),
             exit = fadeOut()
@@ -136,13 +204,21 @@ fun OverviewView(feature: OverviewFeature = koinInject()) {
                             space = 4.dp, alignment = Alignment.CenterHorizontally
                         ), verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            scope.launch {
-                                feature.execute(OverviewCommand.SaveContents(contents = selectionState.contents.toList()))
+                        BadgedBox(badge = {
+                            if (selectionState.contents.isNotEmpty()) {
+                                Badge {
+                                    Text("${selectionState.contents.size}")
+                                }
                             }
-                        }, enabled = selectionState.contents.isNotEmpty()) {
-                            Icon(imageVector = Icons.Default.FolderZip, contentDescription = null)
-                        }
+                        }, content = {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    feature.execute(OverviewCommand.SaveContents(contents = selectionState.contents.toList()))
+                                }
+                            }, enabled = selectionState.contents.isNotEmpty()) {
+                                Icon(imageVector = Icons.Default.FolderZip, contentDescription = null)
+                            }
+                        })
                         IconButton(onClick = {
                             scope.launch {
                                 feature.execute(OverviewCommand.ClearSelection)
@@ -166,165 +242,354 @@ fun OverviewView(feature: OverviewFeature = koinInject()) {
                 }, target = target
             ).padding(paddingValues), contentAlignment = Alignment.Center
         ) {
-            when {
-                state.archives.isEmpty() -> Text(
-                    text = "Drag and drop files here", color = MaterialTheme.colorScheme.onBackground
-                )
+            AnimatedContent(
+                targetState = state.overviewArchives.isEmpty(), transitionSpec = {
+                    fadeIn(animationSpec = tween(500)) togetherWith fadeOut(animationSpec = tween(500))
+                }, label = "overview_content_animation"
+            ) { isEmpty ->
+                when {
+                    isEmpty -> Box(
+                        modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
+                    ) {
+                        Card(shape = RoundedCornerShape(12.dp)) {
+                            Text(text = "Drag and drop ZIP files here", modifier = Modifier.padding(24.dp))
+                        }
+                    }
 
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 128.dp), modifier = Modifier.fillMaxSize()
-                ) {
-                    state.archives.forEach { archive ->
-                        stickyHeader(key = "header_${archive.path}", contentType = "header") {
-                            val hasSelectedContent by remember(state, archive) {
-                                derivedStateOf {
-                                    state is OverviewState.Selection && archive is Archive.Processed && archive.contents.any { content ->
-                                        content.id in (state as OverviewState.Selection).contentIds
+                    else -> {
+                        val gridState = rememberLazyGridState()
+
+                        val headerIndices = remember(state.overviewArchives) {
+                            var currentIndex = 0
+
+                            state.overviewArchives.associate { overviewArchive ->
+                                val index = currentIndex
+
+                                currentIndex += 1
+
+                                val archive = overviewArchive.archive
+
+                                if (overviewArchive is OverviewArchive.Expanded) {
+                                    currentIndex += when (archive) {
+                                        is Archive.Processing, is Archive.Failure -> 1
+
+                                        is Archive.Processed -> archive.contents.size
                                     }
                                 }
+
+                                overviewArchive.archive.path to index
                             }
+                        }
 
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                tonalElevation = 4.dp
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(8.dp).fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = Path.of(archive.name).fileName.toString(),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TooltipArea(tooltip = {
-                                            Card {
-                                                Text(
-                                                    if (state is OverviewState.Selection) "Clear selected files" else "Select files",
-                                                    modifier = Modifier.padding(4.dp)
-                                                )
-                                            }
-                                        }, content = {
-                                            IconButton(
-                                                onClick = {
-                                                    when {
-                                                        hasSelectedContent -> scope.launch {
-                                                            feature.execute(OverviewCommand.ClearSelection)
-                                                        }
-
-                                                        archive is Archive.Processed -> scope.launch {
-                                                            feature.execute(OverviewCommand.AddToSelection(contents = archive.contents))
-                                                        }
-                                                    }
-                                                }, enabled = archive is Archive.Processed
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.SelectAll, contentDescription = null
-                                                )
-                                            }
-                                        })
-                                        TooltipArea(tooltip = {
-                                            Card {
-                                                Text("Save as ZIP", modifier = Modifier.padding(4.dp))
-                                            }
-                                        }, content = {
-                                            IconButton(
-                                                onClick = {
-                                                    if (archive is Archive.Processed) {
-                                                        scope.launch {
-                                                            feature.execute(OverviewCommand.SaveArchive(archive = archive))
-                                                        }
-                                                    }
-                                                },
-                                                enabled = state is OverviewState.Default && archive is Archive.Processed
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.FolderZip, contentDescription = null
-                                                )
-                                            }
-                                        })
-                                        TooltipArea(tooltip = {
-                                            Card {
-                                                Text("Remove from uploaded", modifier = Modifier.padding(4.dp))
-                                            }
-                                        }, content = {
-                                            IconButton(
-                                                onClick = {
-                                                    scope.launch {
-                                                        feature.execute(OverviewCommand.RemoveArchive(archive = archive))
-                                                    }
-                                                },
-                                                enabled = state is OverviewState.Default && archive is Archive.Processed
-                                            ) {
-                                                Icon(imageVector = Icons.Default.Delete, contentDescription = null)
-                                            }
-                                        })
-                                    }
+                        val expandedOverviewArchiveExists by remember {
+                            derivedStateOf {
+                                state.overviewArchives.any { overviewArchive ->
+                                    overviewArchive is OverviewArchive.Expanded
                                 }
                             }
                         }
 
-                        when (archive) {
-                            is Archive.Processing -> item(
-                                key = "processing_${archive.path}", span = { GridItemSpan(maxLineSpan) }) {
-                                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator()
-                                }
-                            }
+                        var isStickyHeaderHovered by remember { mutableStateOf(false) }
 
-                            is Archive.Failure -> item(
-                                key = "failure_${archive.path}", span = { GridItemSpan(maxLineSpan) }) {
-                                Text(
-                                    "Failed to upload: ${archive.throwable.message}",
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(16.dp)
-                                )
-                            }
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = CELL_SIZE.dp),
+                            modifier = Modifier.fillMaxSize(),
+                            state = gridState
+                        ) {
+                            state.overviewArchives.forEach { overviewArchive ->
+                                val archive = overviewArchive.archive
 
-                            is Archive.Processed -> items(
-                                items = archive.contents,
-                                key = { content -> "${archive.path}_${content.id}" },
-                                contentType = { it::class }) { content ->
-                                val isContentSelected by remember(state, content.id) {
-                                    derivedStateOf {
-                                        (state as? OverviewState.Selection)?.contentIds?.contains(content.id) ?: false
-                                    }
-                                }
+                                stickyHeader(
+                                    key = "header_${archive.path}_${
+                                        when (overviewArchive) {
+                                            is OverviewArchive.Expanded -> "expanded"
 
-                                ContentCard(content = content, isSelected = isContentSelected, click = {
-                                    when (state) {
-                                        is OverviewState.Default -> scope.launch {
-                                            feature.execute(OverviewCommand.SaveContent(content = content))
+                                            is OverviewArchive.Collapsed -> "collapsed"
                                         }
+                                    }", contentType = "header"
+                                ) {
+                                    val headerIndex = headerIndices[archive.path] ?: 0
 
-                                        is OverviewState.Selection -> scope.launch {
-                                            val command = when {
-                                                isContentSelected -> OverviewCommand.RemoveFromSelection(
-                                                    contents = listOf(content)
-                                                )
+                                    val isHeaderSticky by remember(
+                                        gridState, headerIndices, expandedOverviewArchiveExists
+                                    ) {
+                                        derivedStateOf {
+                                            if (!expandedOverviewArchiveExists) return@derivedStateOf false
 
-                                                else -> OverviewCommand.AddToSelection(contents = listOf(content))
+                                            val headerIndex = headerIndices[archive.path] ?: return@derivedStateOf false
+
+                                            val firstVisibleIndex = gridState.firstVisibleItemIndex
+
+                                            when {
+                                                firstVisibleIndex > headerIndex -> true
+
+                                                firstVisibleIndex == headerIndex -> gridState.firstVisibleItemScrollOffset > 0
+
+                                                else -> false
                                             }
-
-                                            feature.execute(command)
                                         }
                                     }
-                                }, longClick = {
-                                    if (state is OverviewState.Default) {
-                                        scope.launch {
-                                            feature.execute(
-                                                OverviewCommand.AddToSelection(contents = listOf(content))
+
+                                    val hasSelectedContent by remember(state, archive) {
+                                        derivedStateOf {
+                                            state is OverviewState.Selection && archive is Archive.Processed && archive.contents.any { content ->
+                                                content.id in (state as OverviewState.Selection).contentIds
+                                            }
+                                        }
+                                    }
+
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth().height(HEADER_SIZE.dp)
+                                        .clickable(onClick = {
+                                            scope.launch {
+                                                feature.execute(
+                                                    OverviewCommand.ToggleArchiveExpansion(
+                                                        overviewArchive = overviewArchive
+                                                    )
+                                                )
+                                            }
+                                        }).onPointerEvent(eventType = PointerEventType.Enter, onEvent = {
+                                            isStickyHeaderHovered = true
+                                        }).onPointerEvent(
+                                            eventType = PointerEventType.Exit, onEvent = {
+                                                isStickyHeaderHovered = false
+                                            }), color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 4.dp
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(8.dp).fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = when (overviewArchive) {
+                                                    is OverviewArchive.Expanded -> Icons.Default.ExpandLess
+
+                                                    is OverviewArchive.Collapsed -> Icons.Default.ExpandMore
+                                                }, contentDescription = null
+                                            )
+                                            Text(
+                                                text = "${Path.of(archive.name).fileName}",
+                                                color = when (archive) {
+                                                    is Archive.Failure -> MaterialTheme.colorScheme.error
+
+                                                    else -> Color.Unspecified
+                                                },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                modifier = Modifier.weight(1f).alpha(
+                                                    alpha = when (archive) {
+                                                        is Archive.Processing -> .5f
+
+                                                        else -> 1f
+                                                    }
+                                                )
+                                            )
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                AnimatedVisibility(
+                                                    visible = isHeaderSticky, enter = fadeIn(), exit = fadeOut()
+                                                ) {
+                                                    TooltipArea(tooltip = {
+                                                        if (isHeaderSticky) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                                                tonalElevation = 8.dp
+                                                            ) {
+                                                                Text(
+                                                                    text = "Scroll to top", modifier = Modifier.padding(
+                                                                        horizontal = 8.dp, vertical = 4.dp
+                                                                    ), style = MaterialTheme.typography.labelMedium
+                                                                )
+                                                            }
+                                                        }
+                                                    }, content = {
+                                                        IconButton(onClick = {
+                                                            scope.launch {
+                                                                gridState.animateScrollToItem(headerIndex)
+                                                            }
+                                                        }, enabled = isHeaderSticky) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.ArrowUpward,
+                                                                contentDescription = null
+                                                            )
+                                                        }
+                                                    })
+                                                }
+                                                TooltipArea(tooltip = {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                                        tonalElevation = 8.dp
+                                                    ) {
+                                                        Text(
+                                                            text = if (state is OverviewState.Selection) "Clear selected files" else "Select files",
+                                                            modifier = Modifier.padding(
+                                                                horizontal = 8.dp, vertical = 4.dp
+                                                            ),
+                                                            style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
+                                                }, content = {
+                                                    IconButton(
+                                                        onClick = {
+                                                            when {
+                                                                hasSelectedContent -> scope.launch {
+                                                                    feature.execute(OverviewCommand.ClearSelection)
+                                                                }
+
+                                                                archive is Archive.Processed -> scope.launch {
+                                                                    feature.execute(
+                                                                        OverviewCommand.AddToSelection(
+                                                                            contents = archive.contents
+                                                                        )
+                                                                    )
+                                                                }
+                                                            }
+                                                        }, enabled = archive is Archive.Processed
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.SelectAll,
+                                                            contentDescription = null
+                                                        )
+                                                    }
+                                                })
+                                                TooltipArea(tooltip = {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                                        tonalElevation = 8.dp
+                                                    ) {
+                                                        Text(
+                                                            text = "Save as ZIP", modifier = Modifier.padding(
+                                                                horizontal = 8.dp, vertical = 4.dp
+                                                            ), style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
+                                                }, content = {
+                                                    IconButton(
+                                                        onClick = {
+                                                            if (archive is Archive.Processed) {
+                                                                scope.launch {
+                                                                    feature.execute(OverviewCommand.SaveArchive(archive = archive))
+                                                                }
+                                                            }
+                                                        },
+                                                        enabled = state is OverviewState.Default && archive is Archive.Processed
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.FolderZip,
+                                                            contentDescription = null
+                                                        )
+                                                    }
+                                                })
+                                                TooltipArea(tooltip = {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                                        tonalElevation = 8.dp
+                                                    ) {
+                                                        Text(
+                                                            text = "Remove from uploaded", modifier = Modifier.padding(
+                                                                horizontal = 8.dp, vertical = 4.dp
+                                                            ), style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
+                                                }, content = {
+                                                    IconButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                feature.execute(OverviewCommand.RemoveArchive(archive = archive))
+                                                            }
+                                                        },
+                                                        enabled = state is OverviewState.Default && archive is Archive.Processed
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Delete,
+                                                            contentDescription = null
+                                                        )
+                                                    }
+                                                })
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (overviewArchive is OverviewArchive.Expanded) {
+                                    when (archive) {
+                                        is Archive.Processing -> item(
+                                            key = "processing_${archive.path}", span = { GridItemSpan(maxLineSpan) }) {
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                CircularProgressIndicator()
+                                            }
+                                        }
+
+                                        is Archive.Failure -> item(
+                                            key = "failure_${archive.path}", span = { GridItemSpan(maxLineSpan) }) {
+                                            Text(
+                                                "Failed to upload: ${archive.throwable.message}",
+                                                color = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.padding(16.dp)
                                             )
                                         }
+
+                                        is Archive.Processed -> items(
+                                            items = archive.contents,
+                                            key = { content -> "${archive.path}_${content.id}" },
+                                            contentType = { it::class }) { content ->
+                                            val isContentSelected by remember(state, content.id) {
+                                                derivedStateOf {
+                                                    (state as? OverviewState.Selection)?.contentIds?.contains(content.id)
+                                                        ?: false
+                                                }
+                                            }
+
+                                            ContentCard(
+                                                content = content,
+                                                size = Size(CELL_SIZE, CELL_SIZE),
+                                                isHoverable = !isStickyHeaderHovered && !isFloatingHovered,
+                                                isSelectionModeActive = state is OverviewState.Selection,
+                                                isSelected = isContentSelected,
+                                                click = {
+                                                    when (state) {
+                                                        is OverviewState.Default -> scope.launch {
+                                                            feature.execute(OverviewCommand.SaveContent(content = content))
+                                                        }
+
+                                                        is OverviewState.Selection -> scope.launch {
+                                                            val command = when {
+                                                                isContentSelected -> OverviewCommand.RemoveFromSelection(
+                                                                    contents = listOf(content)
+                                                                )
+
+                                                                else -> OverviewCommand.AddToSelection(
+                                                                    contents = listOf(
+                                                                        content
+                                                                    )
+                                                                )
+                                                            }
+
+                                                            feature.execute(command)
+                                                        }
+                                                    }
+                                                },
+                                                longClick = {
+                                                    if (state is OverviewState.Default) {
+                                                        scope.launch {
+                                                            feature.execute(
+                                                                OverviewCommand.AddToSelection(contents = listOf(content))
+                                                            )
+                                                        }
+                                                    }
+                                                })
+                                        }
                                     }
-                                })
+                                }
                             }
                         }
                     }

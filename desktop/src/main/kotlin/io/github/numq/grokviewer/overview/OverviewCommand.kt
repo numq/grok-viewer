@@ -1,12 +1,13 @@
 package io.github.numq.grokviewer.overview
 
 import io.github.numq.grokviewer.archive.Archive
+import io.github.numq.grokviewer.archive.ArchiveContentFilter
 import io.github.numq.grokviewer.content.Content
 import kotlinx.coroutines.flow.Flow
 
 sealed interface OverviewCommand {
     enum class Key {
-        INITIALIZE, INITIALIZE_SUCCESS, UPLOAD_FILES, REMOVE_ARCHIVE, CLEAR_ARCHIVES, SAVE_CONTENT_CONFIRMATION
+        INITIALIZE, INITIALIZE_CONTENT_FILTERS, INITIALIZE_ARCHIVES, ADD_CONTENT_FILTER, REMOVE_CONTENT_FILTER, UPLOAD_ARCHIVES, REMOVE_ARCHIVE, CLEAR_ARCHIVES, SAVE_CONTENT_CONFIRMATION
     }
 
     data class HandleFailure(val throwable: Throwable) : OverviewCommand
@@ -15,17 +16,37 @@ sealed interface OverviewCommand {
         val key = Key.INITIALIZE
     }
 
-    data class InitializeSuccess(val flow: Flow<List<Archive>>) : OverviewCommand {
-        val key = Key.INITIALIZE_SUCCESS
+    data class InitializeContentFilters(val flow: Flow<Set<ArchiveContentFilter>>) : OverviewCommand {
+        val key = Key.INITIALIZE_CONTENT_FILTERS
     }
+
+    data class InitializeArchives(val flow: Flow<List<Archive>>) : OverviewCommand {
+        val key = Key.INITIALIZE_ARCHIVES
+    }
+
+    data class HandleContentFilters(val contentFilters: Set<ArchiveContentFilter>) : OverviewCommand
 
     data class HandleArchives(val archives: List<Archive>) : OverviewCommand
 
+    data class AddContentFilter(val contentFilter: ArchiveContentFilter) : OverviewCommand {
+        val key = Key.ADD_CONTENT_FILTER
+    }
+
+    data object AddContentFilterSuccess : OverviewCommand
+
+    data class RemoveContentFilter(val contentFilter: ArchiveContentFilter) : OverviewCommand {
+        val key = Key.REMOVE_CONTENT_FILTER
+    }
+
+    data object RemoveContentFilterSuccess : OverviewCommand
+
     data class UploadArchives(val paths: List<String>) : OverviewCommand {
-        val key = Key.UPLOAD_FILES
+        val key = Key.UPLOAD_ARCHIVES
     }
 
     data object UploadArchivesSuccess : OverviewCommand
+
+    data class ToggleArchiveExpansion(val overviewArchive: OverviewArchive) : OverviewCommand
 
     data class RemoveArchive(val archive: Archive) : OverviewCommand {
         val key = Key.REMOVE_ARCHIVE

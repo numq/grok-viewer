@@ -1,9 +1,6 @@
 package io.github.numq.grokviewer.overview
 
-import io.github.numq.grokviewer.archive.AddArchives
-import io.github.numq.grokviewer.archive.ClearArchives
-import io.github.numq.grokviewer.archive.GetArchives
-import io.github.numq.grokviewer.archive.RemoveArchive
+import io.github.numq.grokviewer.archive.*
 import io.github.numq.grokviewer.content.Content
 import io.github.numq.grokviewer.feature.*
 import io.github.numq.grokviewer.save.SaveArchive
@@ -13,6 +10,9 @@ import io.github.numq.grokviewer.save.SaveContents
 import kotlinx.coroutines.flow.map
 
 class OverviewReducer(
+    private val getArchiveContentFilters: GetArchiveContentFilters,
+    private val addArchiveContentFilter: AddArchiveContentFilter,
+    private val removeArchiveContentFilter: RemoveArchiveContentFilter,
     private val addArchives: AddArchives,
     private val clearArchives: ClearArchives,
     private val getArchives: GetArchives,
@@ -26,23 +26,72 @@ class OverviewReducer(
             OverviewEvent.Error(message = command.throwable.message ?: "Unknown error")
         )
 
-        is OverviewCommand.Initialize -> transition(state).effect(
+        is OverviewCommand.Initialize -> transition(state).effects(
             action(key = command.key, block = {
-                getArchives.execute(input = Unit).fold(
-                    onSuccess = OverviewCommand::InitializeSuccess, onFailure = OverviewCommand::HandleFailure
-                )
-            })
+            getArchiveContentFilters.execute(input = Unit).fold(
+                onSuccess = OverviewCommand::InitializeContentFilters, onFailure = OverviewCommand::HandleFailure
+            )
+        }), action(key = command.key, block = {
+            getArchives.execute(input = Unit)
+                .fold(onSuccess = OverviewCommand::InitializeArchives, onFailure = OverviewCommand::HandleFailure)
+        })
         )
 
-        is OverviewCommand.InitializeSuccess -> transition(state).effect(
+        is OverviewCommand.InitializeContentFilters -> transition(state).effect(
+            stream(key = command.key, flow = command.flow.map(OverviewCommand::HandleContentFilters))
+        )
+
+        is OverviewCommand.InitializeArchives -> transition(state).effect(
             stream(key = command.key, flow = command.flow.map(OverviewCommand::HandleArchives))
         )
 
-        is OverviewCommand.HandleArchives -> when (state) {
-            is OverviewState.Default -> transition(state.copy(archives = command.archives))
+        is OverviewCommand.HandleContentFilters -> {
+            val contentFilters = command.contentFilters
 
-            is OverviewState.Selection -> transition(state.copy(archives = command.archives))
+            when (state) {
+                is OverviewState.Default -> transition(state.copy(contentFilters = contentFilters))
+
+                is OverviewState.Selection -> transition(state.copy(contentFilters = contentFilters))
+            }
         }
+
+        is OverviewCommand.HandleArchives -> {
+            val updatedOverviewArchives = command.archives.map { newArchive ->
+                val existing = state.overviewArchives.find { overviewArchive ->
+                    overviewArchive.archive.path == newArchive.path
+                }
+
+                when (existing) {
+                    is OverviewArchive.Collapsed -> OverviewArchive.Collapsed(newArchive)
+
+                    else -> OverviewArchive.Expanded(newArchive)
+                }
+            }
+
+            when (state) {
+                is OverviewState.Default -> transition(state.copy(overviewArchives = updatedOverviewArchives))
+
+                is OverviewState.Selection -> transition(state.copy(overviewArchives = updatedOverviewArchives))
+            }
+        }
+
+        is OverviewCommand.AddContentFilter -> transition(state).effect(action(key = command.key, block = {
+            addArchiveContentFilter.execute(
+                input = AddArchiveContentFilter.Input(contentFilter = command.contentFilter)
+            ).fold(onSuccess = { OverviewCommand.AddContentFilterSuccess }, onFailure = OverviewCommand::HandleFailure)
+        }))
+
+        is OverviewCommand.AddContentFilterSuccess -> transition(state)
+
+        is OverviewCommand.RemoveContentFilter -> transition(state).effect(action(key = command.key, block = {
+            removeArchiveContentFilter.execute(
+                input = RemoveArchiveContentFilter.Input(contentFilter = command.contentFilter)
+            ).fold(
+                onSuccess = { OverviewCommand.RemoveContentFilterSuccess }, onFailure = OverviewCommand::HandleFailure
+            )
+        }))
+
+        is OverviewCommand.RemoveContentFilterSuccess -> transition(state)
 
         is OverviewCommand.UploadArchives -> transition(state).effect(action(key = command.key, block = {
             addArchives.execute(input = AddArchives.Input(paths = command.paths)).fold(
@@ -51,6 +100,34 @@ class OverviewReducer(
         }))
 
         is OverviewCommand.UploadArchivesSuccess -> transition(state)
+
+        is OverviewCommand.ToggleArchiveExpansion -> {
+            val overviewArchiveReplacement = when (command.overviewArchive) {
+                is OverviewArchive.Expanded -> OverviewArchive.Collapsed(archive = command.overviewArchive.archive)
+
+                is OverviewArchive.Collapsed -> OverviewArchive.Expanded(archive = command.overviewArchive.archive)
+            }
+
+            val updatedState = when (state) {
+                is OverviewState.Default -> state.copy(overviewArchives = state.overviewArchives.map { overviewArchive ->
+                    when (overviewArchive.archive.path) {
+                        overviewArchiveReplacement.archive.path -> overviewArchiveReplacement
+
+                        else -> overviewArchive
+                    }
+                })
+
+                is OverviewState.Selection -> state.copy(overviewArchives = state.overviewArchives.map { overviewArchive ->
+                    when (overviewArchive.archive.path) {
+                        overviewArchiveReplacement.archive.path -> overviewArchiveReplacement
+
+                        else -> overviewArchive
+                    }
+                })
+            }
+
+            transition(updatedState)
+        }
 
         is OverviewCommand.RemoveArchive -> transition(state).effect(action(key = command.key, block = {
             removeArchive.execute(input = RemoveArchive.Input(path = command.archive.path)).fold(
@@ -72,7 +149,9 @@ class OverviewReducer(
             is OverviewState.Default -> with(state) {
                 transition(
                     OverviewState.Selection(
-                        archives = archives,
+                        overviewArchives = overviewArchives.map { overviewArchive ->
+                            OverviewArchive.Expanded(archive = overviewArchive.archive)
+                        },
                         lastDirectoryPath = lastDirectoryPath,
                         saveCandidate = saveCandidate,
                         isHovered = isHovered,
@@ -98,7 +177,7 @@ class OverviewReducer(
                 when {
                     contents.isEmpty() -> transition(
                         OverviewState.Default(
-                            archives = archives,
+                            overviewArchives = overviewArchives,
                             lastDirectoryPath = lastDirectoryPath,
                             saveCandidate = saveCandidate,
                             isHovered = isHovered,
@@ -116,7 +195,7 @@ class OverviewReducer(
             is OverviewState.Selection -> with(state) {
                 transition(
                     OverviewState.Default(
-                        archives = archives,
+                        overviewArchives = overviewArchives,
                         lastDirectoryPath = lastDirectoryPath,
                         saveCandidate = saveCandidate,
                         isHovered = isHovered,

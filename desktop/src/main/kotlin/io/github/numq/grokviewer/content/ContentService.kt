@@ -1,56 +1,86 @@
 package io.github.numq.grokviewer.content
 
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
 import org.apache.tika.Tika
 import java.io.File
-import java.util.zip.ZipInputStream
-import kotlin.coroutines.coroutineContext
+import java.util.zip.ZipFile
 
 interface ContentService {
     suspend fun parse(path: String): Result<List<Content>>
 
-    class BinaryContentService(private val tika: Tika) : ContentService {
-        private fun resolveContent(id: String, path: String, bytes: ByteArray): Content {
-            val mimeType = tika.detect(bytes)
+    class BinaryContentService(json: Json, private val tika: Tika) : ContentService {
+        private val preferredExtensions = setOf("jpg", "jpeg", "png", "txt", "mp3", "mp4", "json")
 
-            return when {
-                mimeType.startsWith("image/") -> Content.Visual.Image(
-                    id = id, path = path, rawBytes = bytes, extension = mimeType.substringAfter("/")
-                )
+        @OptIn(ExperimentalSerializationApi::class)
+        private val mimeTypes = javaClass.getResourceAsStream("/json/mime.json")?.use { inputStream ->
+            json.decodeFromStream<Map<String, String>>(stream = inputStream).entries.groupBy({ it.value }, { it.key })
+                .mapValues { (_, extensions) ->
+                    val preferred = extensions.find(preferredExtensions::contains)
 
-                mimeType == "video/webm" || mimeType == "video/x-matroska" -> Content.Visual.VideoPreview(
-                    id = id, path = path, rawBytes = bytes
-                )
+                    if (preferred != null) return@mapValues preferred
 
-                mimeType == "application/json" -> Content.JsonMetadata(
-                    id = id, path = path, fileName = "metadata.json"
-                )
-
-                else -> Content.Unknown(id = id, path = path, rawBytes = bytes)
-            }
-        }
-
-        override suspend fun parse(path: String) = runCatching {
-            buildList {
-                ZipInputStream(File(path).inputStream().buffered()).use { zis ->
-                    var entry = zis.getNextEntry()
-
-                    while (entry != null) {
-                        if (!coroutineContext.isActive) throw kotlinx.coroutines.CancellationException()
-
-                        if (entry.name.endsWith("/content")) {
-                            val bytes = zis.readAllBytes()
-
-                            val fileId = entry.name.split("/").dropLast(1).last()
-
-                            val uniquePath = "$path!/${entry.name}"
-
-                            add(resolveContent(id = fileId, path = uniquePath, bytes = bytes))
-                        }
-
-                        entry = zis.getNextEntry()
-                    }
+                    extensions.minByOrNull { it.length } ?: "bin"
                 }
+        } ?: emptyMap()
+
+        override suspend fun parse(path: String) = withContext(Dispatchers.IO) {
+            runCatching {
+                check(mimeTypes.isNotEmpty()) { "Unable to load MIME types" }
+
+                buildList {
+                    ZipFile(File(path)).use { zipFile ->
+                        val entries = zipFile.entries()
+
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            if (!entry.isDirectory) {
+                                val previewBytes = zipFile.getInputStream(entry).use { inputStream ->
+                                    inputStream.readNBytes(1024)
+                                }
+
+                                val nameParts = entry.name.split("/")
+
+                                val id = when {
+                                    entry.name.endsWith("/content") -> nameParts.dropLast(1).lastOrNull() ?: entry.name
+
+                                    else -> nameParts.last().substringBeforeLast(".")
+                                }
+
+                                val uniquePath = "$path!/${entry.name}"
+
+                                val mimeType = tika.detect(previewBytes)
+
+                                val extension = entry.name.substringAfterLast(".", "").takeIf(String::isNotBlank)
+                                    ?: mimeTypes[mimeType.lowercase()]
+
+                                val content = when (extension) {
+                                    null -> Content.Unknown(
+                                        id = id,
+                                        path = uniquePath,
+                                        mimeType = mimeType,
+                                        entryName = entry.name,
+                                        zipFilePath = path
+                                    )
+
+                                    else -> Content.Resolved(
+                                        id = id,
+                                        path = uniquePath,
+                                        mimeType = mimeType,
+                                        extension = extension,
+                                        entryName = entry.name,
+                                        zipFilePath = path
+                                    )
+                                }
+
+                                add(content)
+                            }
+                        }
+                    }
+                }.sortedBy(Content::id)
             }
         }
     }

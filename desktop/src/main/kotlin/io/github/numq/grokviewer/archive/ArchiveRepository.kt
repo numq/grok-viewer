@@ -3,15 +3,18 @@ package io.github.numq.grokviewer.archive
 import io.github.numq.grokviewer.content.ContentService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.*
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 interface ArchiveRepository : AutoCloseable {
+    val contentFilters: StateFlow<Set<ArchiveContentFilter>>
+
     val archives: StateFlow<List<Archive>>
+
+    suspend fun addContentFilter(filter: ArchiveContentFilter): Result<Unit>
+
+    suspend fun removeContentFilter(filter: ArchiveContentFilter): Result<Unit>
 
     suspend fun addArchives(paths: List<String>): Result<Unit>
 
@@ -20,14 +23,14 @@ interface ArchiveRepository : AutoCloseable {
     suspend fun clearArchives(): Result<Unit>
 
     class InMemoryArchiveRepository(private val service: ContentService) : ArchiveRepository {
-        private val coroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
         private val activeJobs = ConcurrentHashMap<String, Job>()
 
         private val _processingQueue = Channel<Archive.Processing>()
 
         init {
-            coroutineScope.launch {
+            scope.launch {
                 for (processing in _processingQueue) {
                     _archives.update { archives ->
                         when {
@@ -41,29 +44,27 @@ interface ArchiveRepository : AutoCloseable {
 
                     val job = launch {
                         try {
-                            withContext(Dispatchers.IO) {
-                                service.parse(path = processing.path).fold(onSuccess = { contents ->
-                                    _archives.update { current ->
-                                        current.filterNot { archive ->
-                                            archive is Archive.Processing && archive.path == processing.path
-                                        } + Archive.Processed(
-                                            path = processing.path, name = processing.name, contents = contents
-                                        )
-                                    }
-                                }, onFailure = { throwable ->
-                                    _archives.update { current ->
-                                        current.map { archive ->
-                                            when {
-                                                archive is Archive.Processing && archive.path == processing.path -> Archive.Failure(
-                                                    path = archive.path, name = archive.name, throwable = throwable
-                                                )
+                            service.parse(path = processing.path).fold(onSuccess = { contents ->
+                                _archives.update { current ->
+                                    current.filterNot { archive ->
+                                        archive is Archive.Processing && archive.path == processing.path
+                                    } + Archive.Processed(
+                                        path = processing.path, name = processing.name, contents = contents
+                                    )
+                                }
+                            }, onFailure = { throwable ->
+                                _archives.update { current ->
+                                    current.map { archive ->
+                                        when {
+                                            archive is Archive.Processing && archive.path == processing.path -> Archive.Failure(
+                                                path = archive.path, name = archive.name, throwable = throwable
+                                            )
 
-                                                else -> archive
-                                            }
+                                            else -> archive
                                         }
                                     }
-                                })
-                            }
+                                }
+                            })
                         } finally {
                             activeJobs.remove(processing.path)
                         }
@@ -74,9 +75,47 @@ interface ArchiveRepository : AutoCloseable {
             }
         }
 
+        private val _contentFilters = MutableStateFlow<Set<ArchiveContentFilter>>(emptySet())
+
+        override val contentFilters = _contentFilters.asStateFlow()
+
         private val _archives = MutableStateFlow<List<Archive>>(emptyList())
 
-        override val archives = _archives.asStateFlow()
+        override val archives = combine(_contentFilters, _archives) { filters, archives ->
+            when {
+                filters.isEmpty() -> archives
+
+                else -> archives.map { archive ->
+                    when (archive) {
+                        is Archive.Processed -> archive.copy(contents = archive.contents.filter { content ->
+                            val mime = content.mimeType
+
+                            filters.any { filter ->
+                                when (filter) {
+                                    ArchiveContentFilter.IMAGE -> mime.startsWith("image")
+
+                                    ArchiveContentFilter.TEXT -> mime.startsWith("text")
+                                }
+                            }
+                        })
+
+                        else -> archive
+                    }
+                }
+            }
+        }.stateIn(scope = scope, started = SharingStarted.Eagerly, initialValue = emptyList())
+
+        override suspend fun addContentFilter(filter: ArchiveContentFilter) = runCatching {
+            _contentFilters.update { filters ->
+                filters + filter
+            }
+        }
+
+        override suspend fun removeContentFilter(filter: ArchiveContentFilter) = runCatching {
+            _contentFilters.update { filters ->
+                filters - filter
+            }
+        }
 
         override suspend fun addArchives(paths: List<String>) = runCatching {
             paths.forEach { path ->
@@ -105,7 +144,7 @@ interface ArchiveRepository : AutoCloseable {
         }
 
         override fun close() {
-            coroutineScope.cancel()
+            scope.cancel()
 
             _processingQueue.close()
         }
