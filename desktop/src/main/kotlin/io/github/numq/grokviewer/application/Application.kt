@@ -34,6 +34,8 @@ import java.awt.Dimension
 const val APP_NAME = "Grok Viewer"
 
 fun main() {
+    System.setProperty("sun.java2d.d3d", "true")
+
     startKoin { modules(archiveModule, contentModule, overviewModule, saveModule) }
 
     application {
@@ -44,16 +46,20 @@ fun main() {
             state = windowState,
             title = APP_NAME,
             undecorated = true,
-            transparent = true,
             resizable = true,
         ) {
-            window.background = Color(MaterialTheme.colorScheme.background.toArgb())
-
             LaunchedEffect(windowState) {
                 window.minimumSize = Dimension(512, 512)
             }
 
             Theme(darkTheme = isSystemInDarkTheme()) {
+                val backgroundColor = MaterialTheme.colorScheme.background
+
+                LaunchedEffect(backgroundColor) {
+                    window.background = Color(backgroundColor.toArgb())
+                    window.contentPane.background = Color(backgroundColor.toArgb())
+                }
+
                 Surface {
                     Column(
                         modifier = Modifier.fillMaxSize(),
