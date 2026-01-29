@@ -9,7 +9,7 @@ import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.flow.*
 import kotlin.coroutines.cancellation.CancellationException
 
-internal class ReducerFeature<State, in Command, out Event>(
+class ReducerFeature<State, in Command, out Event>(
     initialState: State,
     initialCommands: List<Command> = emptyList(),
     private val scope: CoroutineScope,
