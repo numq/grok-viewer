@@ -27,4 +27,23 @@ formats</p>
 
 ## Installation
 
-## Usage
+GrokViewer is distributed as a portable application. No installation is required.
+
+1. Navigate to the [Releases](https://github.com/numq/grok-viewer/releases) page.
+
+2. Download the archive for your operating system:
+
+    - Windows: `grok-viewer-win-x64.zip`
+
+    - macOS: `grok-viewer-mac-x64.zip`
+
+    - Linux: `grok-viewer-linux-x64.tar.gz`
+
+3. Extract the archive and run the executable file found inside the `app` folder.
+
+## Build
+
+To build the distributable binaries locally, ensure you have JDK 17+ and run:
+
+```bash
+./gradlew :desktop:createDistributable
