@@ -27,7 +27,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: GrokViewer-win-x64
-          path: desktop/build/compose/binaries/main/GrokViewer-win-x64.zip
+          path: desktop/build/compose/binaries/main/app/GrokViewer
+          include-hidden-files: true
 
   build-mac:
     runs-on: macos-latest
