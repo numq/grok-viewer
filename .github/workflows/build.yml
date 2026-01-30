@@ -50,8 +50,10 @@ jobs:
 
       - name: Create ZIP
         run: |
+          WORKSPACE="$PWD"
+          
           cd desktop/build/compose/binaries/main/app
-          zip -r ../../../../../GrokViewer-mac-x64.zip GrokViewer.app
+          zip -r "$WORKSPACE/GrokViewer-mac-x64.zip" GrokViewer.app
 
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -77,6 +79,7 @@ jobs:
       - name: Create ZIP
         run: |
           TEMP_DIR="temp_zip"
+          
           mkdir -p "$TEMP_DIR/GrokViewer"
           cp -R desktop/build/compose/binaries/main/app/GrokViewer/* "$TEMP_DIR/GrokViewer/"
           cd "$TEMP_DIR"
